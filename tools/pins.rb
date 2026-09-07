@@ -63,7 +63,12 @@ flavor_block = flavors[flavor] or
   die "recipe.yml: unknown flavor '#{flavor}' (have: #{flavors.keys.join(', ')})"
 
 runtime = recipe.fetch("runtime")
-wrapper_tebako = runtime.fetch("wrapper_tebako")
+# The wrapper pin is per-FLAVOR overridable (the jvm flavor requires the
+# spec-33-aware launcher line; the shared runtime block stays the native
+# flavor's): flavors.<flavor>.wrapper_tebako / .wrapper_sha256 win when
+# present. A missing pin is a named error either way (spec 00 §9).
+wrapper_tebako = flavor_block["wrapper_tebako"] || runtime.fetch("wrapper_tebako")
+wrapper_shas = flavor_block["wrapper_sha256"] || runtime.fetch("wrapper_sha256")
 pkg_version = flavor_block.dig("upstream", "version") ||
               die("recipe.yml flavors.#{flavor}.upstream.version missing")
 
@@ -106,9 +111,8 @@ unless ARGV.include?("--release-only")
   # guess (the launcher ships as the runtime pair's entry point).
   pairs["WRAPPER_RELEASE"] = "v#{wrapper_tebako}"
   pairs["WRAPPER_ASSET"] = "tebako-runtime-launcher-#{wrapper_tebako}-#{platform}#{exe}"
-  wrapper_shas = runtime.fetch("wrapper_sha256")
   pairs["WRAPPER_SHA256"] = wrapper_shas[platform] ||
-                            die("recipe.yml: no runtime.wrapper_sha256.#{platform} pin")
+                            die("recipe.yml: no wrapper_sha256.#{platform} pin for flavor '#{flavor}'")
   pairs["RUNTIME_STEM_BASE"] = "tebako-runtime-#{wrapper_tebako}-#{pkg_version}"
   pairs["RUNTIME_STEM"] = "#{pairs['RUNTIME_STEM_BASE']}-#{platform}"
   # The extracted preload shim (POSIX legs only). The tarball's internal
@@ -118,6 +122,26 @@ unless ARGV.include?("--release-only")
   unless platform.start_with?("windows")
     dl_ext = platform.include?("macos") ? "dylib" : "so"
     pairs["PRELOAD_SHIM"] = ".packager/link-unit-#{platform}/libtfs_preload.#{dl_ext}"
+  end
+  # The composed smoke's owner pair (flavors with an on_runtime edge —
+  # spec 33): the workflow downloads the PUBLISHED owner runtime into a
+  # throwaway store. The recipe's flavors.<flavor>.owner_smoke block is
+  # the pin SSOT (repo/release/version/tebako line + exe/image sha256
+  # per platform, cross-checked against that release's own SHA256SUMS at
+  # fetch). The store dir ids ride the release-asset platform spelling
+  # (java-<ver>-<line>-<platform>), matching the store grammar.
+  if (owner = flavor_block["owner_smoke"])
+    owner_version = owner.fetch("version")
+    owner_line = owner.fetch("tebako")
+    pairs["OWNER_REPO"] = owner.fetch("repo")
+    pairs["OWNER_RELEASE"] = owner.fetch("release")
+    pairs["OWNER_STEM"] = "tebako-runtime-#{owner_line}-#{owner_version}-#{platform}"
+    pairs["OWNER_STORE_ID"] = "java-#{owner_version}-#{owner_line}-#{platform}"
+    pairs["OWNER_EXE_SHA256"] = owner.fetch("exe_sha256")[platform] ||
+                                die("recipe.yml: no owner_smoke.exe_sha256.#{platform} pin")
+    pairs["OWNER_IMAGE_SHA256"] = owner.fetch("image_sha256")[platform] ||
+                                  die("recipe.yml: no owner_smoke.image_sha256.#{platform} pin")
+    pairs["DEP_STORE_ID"] = "ruby-#{pkg_version}-#{wrapper_tebako}-#{platform}"
   end
 end
 

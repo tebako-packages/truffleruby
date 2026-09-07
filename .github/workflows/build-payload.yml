@@ -1,11 +1,14 @@
 name: build-payload
 # truffleruby feedstock: fetch → stage → image → smoke → (on tags) publish.
-# One mechanical leg per (flavor × platform) — the flavor names the MODE
-# (native; jvm lands with TODO.truffleruby/03 as spec 33's
-# runtime-on-runtime form), platforms aarch64-macos + x86_64-linux-gnu +
-# aarch64-linux-gnu (upstream ships NO windows and NO macos-x86_64
-# truffleruby build — the matrix is the declarative truth, not an
-# omission).
+# One mechanical leg per (flavor × platform) — the flavor names the MODE:
+# native (the exe-relative native-image launcher) and jvm (TODO.truffleruby/03
+# — spec 33's runtime-on-runtime form: env image composed ON the published
+# graalvm java owner; its legs' smoke is the COMPOSED wire — shim → dep
+# runtime → owner — plus the spec 33 §5 standalone fail-closed negative
+# gate). Platforms aarch64-macos + x86_64-linux-gnu (+ aarch64-linux-gnu
+# native only; upstream ships NO windows and NO macos-x86_64 truffleruby
+# build, and the jvm legs follow the graalvm owner's coverage — the matrix
+# is the declarative truth, not an omission).
 #
 # kind: runtime (spec 28/29): each leg ships the PAIR — the wrapper exe
 # (tebako-runtime-launcher) + the env image (.tfs) + sidecars + the
@@ -47,8 +50,14 @@ jobs:
       fail-fast: false
       matrix:
         # Identity only (which leg, which runner, which flavor). All
-        # versions/digests flow from recipe.yml via tools/pins.rb.
-        flavor: [native]
+        # versions/digests flow from recipe.yml via tools/pins.rb. The
+        # jvm flavor (spec 33) ships TWO legs: the graalvm owner pair its
+        # composed smoke needs exists for macos-arm64 + linux-gnu-x86_64
+        # only (openjdk-graalvm 25.0.4.1 has no linux-arm64 leg — the
+        # truffleruby-jvm aarch64-linux-gnu leg is a named follow-up
+        # gated on the owner, declared in recipe.yml, never omitted
+        # silently).
+        flavor: [native, jvm]
         platform:
           - triplet: aarch64-macos
             asset_platform: macos-arm64
@@ -59,6 +68,12 @@ jobs:
           - triplet: aarch64-linux-gnu
             asset_platform: linux-gnu-arm64
             os: ubuntu-24.04-arm
+        exclude:
+          - flavor: jvm
+            platform:
+              triplet: aarch64-linux-gnu
+              asset_platform: linux-gnu-arm64
+              os: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -127,6 +142,24 @@ jobs:
           tar -xzf .packager/link-unit.tar.gz -C .packager
           [ -f "$PRELOAD_SHIM" ] || { echo "::error::link-unit tarball carries no $PRELOAD_SHIM"; exit 1; }
 
+      # The dispatcher for the jvm legs' composed smoke (spec 33's real
+      # wire: shim → dep runtime → owner runtime). Same two-anchor rule
+      # as the imager: the recipe pin AND the release's own SHA256SUMS.
+      - name: Fetch the dispatcher (tebako-shim, jvm legs only)
+        if: matrix.flavor == 'jvm'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .packager
+          base="https://github.com/tamatebako/tebako/releases/download/$TEBAKO_RELEASE"
+          curl -sL --fail -o .packager/tebako-shim "$base/$TEBAKO_SHIM_ASSET"
+          curl -sL --fail -o SHA256SUMS "$base/SHA256SUMS"
+          echo "$TEBAKO_SHIM_SHA256  .packager/tebako-shim" | { sha256sum -c - 2>/dev/null || shasum -a 256 -c -; }
+          got=$(awk -v a="$TEBAKO_SHIM_ASSET" '$2 == a {print $1}' SHA256SUMS)
+          [ "$got" = "$TEBAKO_SHIM_SHA256" ] || { echo "::error::pin mismatch for $TEBAKO_SHIM_ASSET: recipe.yml=$TEBAKO_SHIM_SHA256 release=${got:-ABSENT}"; exit 1; }
+          chmod +x .packager/tebako-shim
+          echo "SHIM_BIN=$PWD/.packager/tebako-shim" >> "$GITHUB_ENV"
+
       - name: Build the runtime pair
         shell: bash
         env:
@@ -172,21 +205,41 @@ jobs:
           done
       # The runtime release flow (spec 28 §6): the tag IS the tebako
       # product line (v<line>, the trr convention — the resolver's
-      # {base}/v<tebako_version>/<asset> URL shape answers it). Assets:
-      # the pair per platform + sidecars + shards, then the derived
-      # monoliths.
+      # {base}/v<tebako_version>/<asset> URL shape answers it). The two
+      # flavors ride DIFFERENT lines (native 2.4.0, jvm 2.5.0 — the mode
+      # rides the tebako line, spec 28 §8), so a tag publishes exactly ONE
+      # flavor: the one whose wrapper_tebako equals the tag's version.
+      # The other flavor's legs still ran (every tag proves both build),
+      # but their artifacts are CI-only here — the published flavor's
+      # sibling registry entry on main stays BYTE-STABLE (the java/06
+      # acceptance principle).
+      - name: Select the flavor this tag ships (the tag IS the wrapper line)
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag_line="${GITHUB_REF_NAME#v}"
+          pub=""
+          for f in native jvm; do
+            line=$(ruby tools/pins.rb macos-arm64 "$f" --env | grep '^WRAPPER_RELEASE=' | cut -d= -f2)
+            if [ "${line#v}" = "$tag_line" ]; then
+              [ -z "$pub" ] || { echo "::error::tag $GITHUB_REF_NAME matches BOTH flavors' wrapper lines — the mode-line mapping is broken"; exit 1; }
+              pub="$f"
+            fi
+          done
+          [ -n "$pub" ] || { echo "::error::tag $GITHUB_REF_NAME matches no flavor's wrapper line (recipe.yml)"; exit 1; }
+          echo "PUBLISH_FLAVOR=$pub" >> "$GITHUB_ENV"
       - name: Read the toolchain pins (recipe.yml is the SSOT)
-        run: ruby tools/pins.rb macos-arm64 native --env >> "$GITHUB_ENV"
+        run: ruby tools/pins.rb macos-arm64 "$PUBLISH_FLAVOR" --env >> "$GITHUB_ENV"
       - name: Create the release + upload the runtime pairs
         shell: bash
         run: |
           set -euo pipefail
           tag="${{ github.ref_name }}"
           gh release create "$tag" --repo tebako-packages/truffleruby \
-            --title "$tag — tebako-runtime truffleruby (TruffleRuby Community $PKG_VERSION, native mode)" \
-            --notes "tebako ruby runtime pair (wrapper exe + env image) per platform — implementation truffleruby, native mode; manifest.json is the release index, SHA256SUMS.txt the trust anchor." \
+            --title "$tag — tebako-runtime truffleruby (TruffleRuby Community $PKG_VERSION, $PUBLISH_FLAVOR mode)" \
+            --notes "tebako ruby runtime pair (wrapper exe + env image) per platform — implementation truffleruby, $PUBLISH_FLAVOR mode; manifest.json is the release index, SHA256SUMS.txt the trust anchor." \
             || gh release view "$tag" --repo tebako-packages/truffleruby > /dev/null
-          for shard in out/*/tebako-runtime-*.manifest.json; do
+          for shard in out/$PUBLISH_FLAVOR-*/tebako-runtime-*.manifest.json; do
             dir="$(dirname "$shard")"
             stem="$(basename "$shard" .manifest.json)"
             # "$stem"* = the exe, the .tfs, both .sha256 sidecars, the
@@ -199,26 +252,58 @@ jobs:
           set -euo pipefail
           tag="${{ github.ref_name }}"
           ruby -rjson -e 'puts JSON.pretty_generate(ARGV.sort.map { |f| JSON.parse(File.read(f)) })' \
-            out/*/tebako-runtime-*.manifest.json > manifest.json
-          cat out/*/tebako-runtime-*.sha256 > SHA256SUMS.txt
+            out/$PUBLISH_FLAVOR-*/tebako-runtime-*.manifest.json > manifest.json
+          cat out/$PUBLISH_FLAVOR-*/tebako-runtime-*.sha256 > SHA256SUMS.txt
           gh release upload --clobber "$tag" --repo tebako-packages/truffleruby manifest.json SHA256SUMS.txt
       # The registry mirrors resolution fields only (L3): the env image
       # is the named artifact per platform; kind: runtime carries NO
       # entrypoints key (the validator: only apps and toolkits declare
-      # entrypoints).
+      # entrypoints). Replace-or-append THIS flavor's entry on top of
+      # origin/main's document — the sibling flavor's entry (and any
+      # other) stays byte-stable. Entry blocks open with `- name: <n>` at
+      # column 0 and run to the next entry or EOF.
       - name: Render the registry entry
         shell: bash
         run: |
           set -euo pipefail
           tag="${{ github.ref_name }}"
           sha_for() { cut -d' ' -f1 "out/$1/$2.tfs.sha256"; }
-          sed -e "s|@@VERSION@@|$PKG_VERSION|g" \
-              -e "s|@@STEM@@|$RUNTIME_STEM_BASE|g" \
-              -e "s|@@TAG@@|$tag|g" \
-              -e "s|@@SHA256_MACOS@@|$(sha_for native-aarch64-macos "$RUNTIME_STEM_BASE-macos-arm64")|g" \
-              -e "s|@@SHA256_LINUX@@|$(sha_for native-x86_64-linux-gnu "$RUNTIME_STEM_BASE-linux-gnu-x86_64")|g" \
-              -e "s|@@SHA256_LINUX_ARM@@|$(sha_for native-aarch64-linux-gnu "$RUNTIME_STEM_BASE-linux-gnu-arm64")|g" \
-              manifests/registry.yaml > tpkg-registry.yaml
+          if [ "$PUBLISH_FLAVOR" = jvm ]; then
+            tpl=manifests/registry-jvm.yaml
+            sed -e "s|@@VERSION@@|$PKG_VERSION|g" \
+                -e "s|@@STEM@@|$RUNTIME_STEM_BASE|g" \
+                -e "s|@@TAG@@|$tag|g" \
+                -e "s|@@SHA256_MACOS@@|$(sha_for jvm-aarch64-macos "$RUNTIME_STEM_BASE-macos-arm64")|g" \
+                -e "s|@@SHA256_LINUX@@|$(sha_for jvm-x86_64-linux-gnu "$RUNTIME_STEM_BASE-linux-gnu-x86_64")|g" \
+                "$tpl" > rendered-entry.yaml
+          else
+            tpl=manifests/registry.yaml
+            sed -e "s|@@VERSION@@|$PKG_VERSION|g" \
+                -e "s|@@STEM@@|$RUNTIME_STEM_BASE|g" \
+                -e "s|@@TAG@@|$tag|g" \
+                -e "s|@@SHA256_MACOS@@|$(sha_for native-aarch64-macos "$RUNTIME_STEM_BASE-macos-arm64")|g" \
+                -e "s|@@SHA256_LINUX@@|$(sha_for native-x86_64-linux-gnu "$RUNTIME_STEM_BASE-linux-gnu-x86_64")|g" \
+                -e "s|@@SHA256_LINUX_ARM@@|$(sha_for native-aarch64-linux-gnu "$RUNTIME_STEM_BASE-linux-gnu-arm64")|g" \
+                "$tpl" > rendered-entry.yaml
+          fi
+          # The template renders the full document for the FIRST publish;
+          # afterwards main's doc is the base and this flavor's entry is
+          # replace-or-appended. The appended form is the entry block only
+          # (from its `- name:` line — the registry is an L3 mirror:
+          # resolution fields, no commentary; the template files carry the
+          # comments).
+          git fetch origin main
+          if git show origin/main:tpkg-registry.yaml > reg-main.yaml 2>/dev/null; then
+            entry_name=$(grep -m1 '^- name: ' rendered-entry.yaml | sed 's/^- name: *//')
+            sed -n '/^- name: /,$p' rendered-entry.yaml > entry-only.yaml
+            awk -v entry="- name: $entry_name" '
+              /^- name: / { skip = ($0 == entry) ? 1 : 0 }
+              !skip { print }
+            ' reg-main.yaml > reg-trimmed.yaml
+            cat reg-trimmed.yaml entry-only.yaml > tpkg-registry.yaml
+          else
+            cat rendered-entry.yaml > tpkg-registry.yaml
+          fi
       # main is branch-protected (and the GitHub-Actions bypass is not
       # available on this plan): the registry lands by bot PR + auto-merge,
       # never by direct push. Idempotent across re-runs of the same tag.

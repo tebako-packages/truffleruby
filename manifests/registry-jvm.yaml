@@ -1,0 +1,32 @@
+# Registry template FRAGMENT for the truffleruby JVM-mode RUNTIME entry —
+# spec 33's runtime-on-runtime form. NOT a standalone document: the
+# publish job appends this fragment to the registry document (the native
+# entry carries schema_version + the payloads: key — same pattern as
+# openjdk's registry-graalvm.yaml). The mode is a NON-axis for selection
+# (spec 28 §8 / spec 33 §6): the selector spelling is ruby:truffleruby for
+# BOTH modes; the jvm mode is chosen by a per-entry pin on THIS name or by
+# the `;tebako=` line (the jvm pair rides the tebako 2.5.0 line — its
+# wrapper is the spec-33-aware launcher; the native pair rides 2.4.0).
+# The on_runtime edge is NOT mirrored here (L3 mirrors resolution fields
+# only): it lives in the release shard (the shim's plan-time read) and the
+# in-image manifest (the authority).
+# Platform matrix: graalvm owner coverage is the constraint — the owner
+# (tebako-packages/openjdk v2.4.1, java:graalvm 25.0.4.1) ships
+# macos-arm64 + linux-gnu-x86_64 (+ windows-ucrt64, which truffleruby
+# upstream does not cover). aarch64-linux-gnu lands when the graalvm
+# flavor gains that leg — a named follow-up, never a silent omission.
+- name: truffleruby-jvm
+  kind: runtime
+  versions:
+  - version: '@@VERSION@@'
+    implementation: truffleruby
+    platforms:
+      aarch64-macos:
+        artifact: @@STEM@@-macos-arm64.tfs
+        sha256: '@@SHA256_MACOS@@'
+      x86_64-linux-gnu:
+        artifact: @@STEM@@-linux-gnu-x86_64.tfs
+        sha256: '@@SHA256_LINUX@@'
+    release:
+      ref: tfs:github:tebako-packages/truffleruby:@@TAG@@
+  default: '@@VERSION@@'
