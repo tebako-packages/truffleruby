@@ -1,7 +1,32 @@
 schema_version: 1
-# The truffleruby feedstock registry — rendered from
-# manifests/registry.yaml by the build-payload publish job and landed on
-# main by bot PR per release tag. Empty until the first runtime release
-# (the resolver reads payloads: [] as "nothing listed here yet" — a
-# pre-release registry is a valid document).
-payloads: []
+# Registry template for the truffleruby RUNTIME entry (native mode) —
+# rendered by the publish job (sed tokens from the built shards/sidecars)
+# and landed on main by bot PR. kind: runtime entries carry NO
+# entrypoints key (the registry validator: only apps and toolkits
+# declare entrypoints). `implementation: truffleruby` is the spec 28 §8
+# flavor axis — the selector spelling is ruby:truffleruby (one ruby
+# engine). The jvm-mode sibling (spec 33's runtime-on-runtime form)
+# lands with TODO.truffleruby/03 as a separate registry name; the mode
+# is a NON-axis (spec 33 §6).
+# Platform matrix: upstream (oracle/truffleruby) ships NO windows build
+# and no macos-x86_64 build — the three triplets below are the complete
+# declarative matrix, never an omission.
+payloads:
+- name: truffleruby
+  kind: runtime
+  versions:
+  - version: '34.0.1'
+    implementation: truffleruby
+    platforms:
+      aarch64-macos:
+        artifact: tebako-runtime-2.4.0-34.0.1-macos-arm64.tfs
+        sha256: 'f09c3da03ea501e7280b76434c19e0162534d8f49f38d50b4d917780941a9d92'
+      x86_64-linux-gnu:
+        artifact: tebako-runtime-2.4.0-34.0.1-linux-gnu-x86_64.tfs
+        sha256: '048599618402161af06170b6aecb15f7ad41e19c5965e5ff444114caa2dc9425'
+      aarch64-linux-gnu:
+        artifact: tebako-runtime-2.4.0-34.0.1-linux-gnu-arm64.tfs
+        sha256: '5e495a79b33d9fdedac6aa327c70c2306ad5086e3d43f01e93fabd0df1e10ec7'
+    release:
+      ref: tfs:github:tebako-packages/truffleruby:v2.4.0
+  default: '34.0.1'
