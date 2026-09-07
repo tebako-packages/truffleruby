@@ -1,0 +1,20 @@
+# Env-image layout declaration for the truffleruby JVM-mode runtime (spec
+# 33 §5 — the depending runtime's env image declares NO interpreter: a
+# STANDALONE boot of this pair fails closed by name; the runtime runs ON
+# its graalvm owner via the manifest's on_runtime composition). Grammar
+# owner: docs/spec/schemas/layout.yaml in tamatebako/tebako
+# (schema_minor 4); the writer here FLOWS the same owned values.
+# Rendered by tools/build into /lib/tebako/layout.yaml inside the image.
+schema_version: 1
+era: 2
+image_layout: 1
+# The mount root the image was built for — must equal the wrapper exe's
+# compiled-in WRAPPER_RUNTIME_ROOT (/__tfs__ on POSIX — every leg of this
+# flavor is POSIX; crates/tebako-driver/src/wrapper.rs). A mismatch is
+# exit 78, never a broken boot.
+mount_root: "@@MOUNT_ROOT@@"
+interpreter_api_version: "@@API_VERSION@@"
+# No interpreter key (spec 33 §5), no preload_shim grant — the dep image
+# never execs a process of its own; the OWNER pair carries the preload
+# binding for the composed process (the graalvm runtime's own layout).
+mount_root_override: false

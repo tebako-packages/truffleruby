@@ -138,6 +138,39 @@ recipe_runtime_value() {
     }
   ' "$FEEDSTOCK/recipe.yml"
 }
+# The flavor's on_runtime sub-scalars (6-space under the 4-space
+# on_runtime: key — spec 33 §2's owner edge) and the raw (unstripped)
+# flavor scalar for the argv_template flow seq (its tokens are QUOTED —
+# `{mount}` opens a flow mapping unquoted — so the generic value reader's
+# quote-trimming would mangle it; the raw line is sed-parsed below).
+recipe_onruntime_value() {
+  awk -v flavor="$FLAVOR" -v key="$1" "$_flavor_scope"'
+    /^    on_runtime:/ { inor = 1; next }
+    inor && /^    [a-z_]+:/ { inor = 0 }
+    inor && $0 ~ ("^      " key ":") {
+      line = $0
+      sub("^      " key ": *", "", line)
+      sub("^\"", "", line)
+      sub("\".*$", "", line)
+      sub(/[ \t]+#.*$/, "", line)
+      sub(/[ \t]+$/, "", line)
+      print line
+      exit
+    }
+  ' "$FEEDSTOCK/recipe.yml"
+}
+recipe_flavor_raw() {
+  awk -v flavor="$FLAVOR" -v key="$1" "$_flavor_scope"'
+    $0 ~ ("^    " key ": *") {
+      line = $0
+      sub("^    " key ": *", "", line)
+      sub(/[ \t]+#.*$/, "", line)
+      sub(/[ \t]+$/, "", line)
+      print line
+      exit
+    }
+  ' "$FEEDSTOCK/recipe.yml"
+}
 
 VERSION="$(recipe_value version)"
 TAG="$(recipe_value tag)"
@@ -154,10 +187,51 @@ ABI_LINE="$(recipe_flavor_value abi_line)"
 API_VERSION="$(recipe_flavor_value interpreter_api_version)"
 INTERPRETER="$(recipe_runtime_value interpreter)"
 VISIBILITY="$(recipe_runtime_value visibility)"
-WRAPPER_TEBAKO="$(recipe_runtime_value wrapper_tebako)"
+# The wrapper line is per-FLAVOR overridable (spec 33's jvm flavor needs
+# the 2.5.0 launcher; the shared runtime block stays native's 2.4.0).
+WRAPPER_TEBAKO="$(recipe_flavor_value wrapper_tebako)"
+[ -n "$WRAPPER_TEBAKO" ] || WRAPPER_TEBAKO="$(recipe_runtime_value wrapper_tebako)"
 SMOKE_ARGS="$(recipe_runtime_value smoke_args)"
 # The entrypoints flow list: [bundle, erb, …] → a space-separated shell list.
 ENTRYPOINTS="$(recipe_flavor_value entrypoints | sed -E 's/^\[//; s/\]$//; s/,/ /g')"
+# spec 33 mode detection: a flavor with an on_runtime edge is the
+# runtime-on-runtime form — no interpreter grant in the layout, no
+# preload staging, the owner edge + argv template in the manifest, and
+# the composed smoke (shim → this runtime → the graalvm owner) instead of
+# the standalone host smokes.
+ON_ENGINE="$(recipe_onruntime_value engine)"
+JVM_MODE=0
+if [ -n "$ON_ENGINE" ]; then
+  JVM_MODE=1
+  ON_IMPLEMENTATION="$(recipe_onruntime_value implementation)"
+  ON_CONSTRAINT="$(recipe_onruntime_value constraint)"
+  ON_MOUNT="$(recipe_onruntime_value mount)"
+  for v in ON_ENGINE ON_IMPLEMENTATION ON_CONSTRAINT ON_MOUNT; do
+    eval "val=\$$v"
+    [ -n "$val" ] || { echo "recipe.yml flavors.$FLAVOR.on_runtime.${v} unreadable (or empty)"; exit 1; }
+  done
+  # The compose template: one quoted, space-free token per element;
+  # strip the flow brackets, split on '", "' boundaries.
+  ARGV_TOKENS="$(recipe_flavor_raw argv_template | sed -E 's/^\[//; s/\][ \t]*$//; s/^"//; s/"$//; s/", *"/\n/g')"
+  [ -n "$ARGV_TOKENS" ] || { echo "recipe.yml flavors.$FLAVOR.argv_template unreadable (or empty)"; exit 1; }
+  ARGV_YAML=""
+  while IFS= read -r tok; do
+    ARGV_YAML="$ARGV_YAML      - \"$tok\"
+"
+  done <<EOF
+$ARGV_TOKENS
+EOF
+fi
+# The mode selects the manifest + layout templates (the jvm forms carry
+# the on_runtime authority block and declare no interpreter — spec 33
+# §2/§5).
+if [ "$JVM_MODE" = 1 ]; then
+  MANIFEST_TPL="runtime-jvm.yaml"
+  LAYOUT_TPL="layout-jvm.yaml"
+else
+  MANIFEST_TPL="runtime.yaml"
+  LAYOUT_TPL="layout.yaml"
+fi
 for v in ENGINE IMPLEMENTATION LANG_VERSION ABI_LINE API_VERSION INTERPRETER VISIBILITY WRAPPER_TEBAKO SMOKE_ARGS; do
   eval "val=\$$v"
   [ -n "$val" ] || { echo "recipe.yml runtime/flavors.$FLAVOR .${v} unreadable (or empty)"; exit 1; }
@@ -258,9 +332,11 @@ echo "dereferenced: $deref_count"
 # The preload shim rides the image (the layout's preload_shim grant; the
 # driver arms DYLD_INSERT_LIBRARIES / LD_PRELOAD from it so the jail's
 # host-IO binding survives the exec into the interpreter). Declared-but-
-# absent is exit 78 — the file lands in the same pass. Every leg of this
-# feedstock is POSIX, so DL_EXT is always set here.
-if [ -n "$DL_EXT" ]; then
+# absent is exit 78 — the file lands in the same pass. NATIVE mode only:
+# the jvm flavor's layout declares no preload grant (spec 33 §5 — the dep
+# image never execs a process of its own; the OWNER pair's layout carries
+# the composed process's binding).
+if [ "$JVM_MODE" = 0 ] && [ -n "$DL_EXT" ]; then
   step "stage the preload shim (lib/tebako/libtfs_preload.$DL_EXT)"
   [ -n "$PRELOAD_SHIM" ] && [ -f "$PRELOAD_SHIM" ] || {
     echo "PRELOAD_SHIM (the link-unit's libtfs_preload.$DL_EXT) is required on POSIX legs"; exit 1; }
@@ -294,22 +370,37 @@ sed -e "s|@@NAME@@|truffleruby|g" \
     -e "s|@@ABI_LINE@@|$ABI_LINE|g" \
     -e "s|@@TRIPLET@@|$TRIPLET|g" \
     -e "s|@@IMPLEMENTATION@@|$IMPLEMENTATION|g" \
-    "$FEEDSTOCK/manifests/runtime.yaml" |
-  EP_YAML="$EP_YAML" awk '{ if (index($0, "@@ENTRYPOINTS_YAML@@")) printf "%s", ENVIRON["EP_YAML"]; else print }' \
+    ${ON_ENGINE:+-e "s|@@ON_ENGINE@@|$ON_ENGINE|g"} \
+    ${ON_IMPLEMENTATION:+-e "s|@@ON_IMPLEMENTATION@@|$ON_IMPLEMENTATION|g"} \
+    ${ON_CONSTRAINT:+-e "s|@@ON_CONSTRAINT@@|$ON_CONSTRAINT|g"} \
+    ${ON_MOUNT:+-e "s|@@ON_MOUNT@@|$ON_MOUNT|g"} \
+    "$FEEDSTOCK/manifests/$MANIFEST_TPL" |
+  EP_YAML="$EP_YAML" ARGV_YAML="${ARGV_YAML:-}" awk '{
+    if (index($0, "@@ENTRYPOINTS_YAML@@")) printf "%s", ENVIRON["EP_YAML"];
+    else if (index($0, "@@ARGV_YAML@@")) printf "%s", ENVIRON["ARGV_YAML"];
+    else print }' \
     > "$ROOT/__tpkg__/manifest.yaml"
 
 step "embed /lib/tebako/layout.yaml (the C3 pair contract)"
 mkdir -p "$ROOT/lib/tebako"
-if [ -n "$DL_EXT" ]; then
-  PRELOAD_DECL="preload_shim: \"lib/tebako/libtfs_preload.$DL_EXT\""
+if [ "$JVM_MODE" = 1 ]; then
+  # spec 33 §5: no interpreter key, no preload grant — the tokens are the
+  # mount root + the declared api line only.
+  sed -e "s|@@MOUNT_ROOT@@|$MOUNT_ROOT|g" \
+      -e "s|@@API_VERSION@@|$API_VERSION|g" \
+      "$FEEDSTOCK/manifests/$LAYOUT_TPL" > "$ROOT/lib/tebako/layout.yaml"
 else
-  PRELOAD_DECL="# (preload_shim omitted — no preload mechanism on windows)"
+  if [ -n "$DL_EXT" ]; then
+    PRELOAD_DECL="preload_shim: \"lib/tebako/libtfs_preload.$DL_EXT\""
+  else
+    PRELOAD_DECL="# (preload_shim omitted — no preload mechanism on windows)"
+  fi
+  sed -e "s|@@MOUNT_ROOT@@|$MOUNT_ROOT|g" \
+      -e "s|@@API_VERSION@@|$API_VERSION|g" \
+      -e "s|@@EXE_SUFFIX@@|$EXE_SUFFIX|g" \
+      -e "s|@@PRELOAD_SHIM_DECL@@|$PRELOAD_DECL|g" \
+      "$FEEDSTOCK/manifests/$LAYOUT_TPL" > "$ROOT/lib/tebako/layout.yaml"
 fi
-sed -e "s|@@MOUNT_ROOT@@|$MOUNT_ROOT|g" \
-    -e "s|@@API_VERSION@@|$API_VERSION|g" \
-    -e "s|@@EXE_SUFFIX@@|$EXE_SUFFIX|g" \
-    -e "s|@@PRELOAD_SHIM_DECL@@|$PRELOAD_DECL|g" \
-    "$FEEDSTOCK/manifests/layout.yaml" > "$ROOT/lib/tebako/layout.yaml"
 
 # ------------------------------------------------------------------ image
 step "tfs mkimage (the in-process dwarfs-t writer)"
@@ -340,6 +431,13 @@ printf '%s  %s\n' "$sha" "$STEM.tfs" > "$IMG.sha256"
 printf '%s  %s\n' "$exe_sha" "$STEM$EXE_SUFFIX" > "$EXE_OUT.sha256"
 ARCHIVE_NAME="$(basename "$URL")"
 RELEASE_REF="${GITHUB_REF_NAME:-local}"
+# The shard mirrors the on_runtime edge for the shim's plan-time read
+# (spec 33 §2; the in-image block stays the authority — the driver
+# cross-checks). Native-mode shards carry no such key.
+ON_RUNTIME_JSON=""
+if [ "$JVM_MODE" = 1 ]; then
+  ON_RUNTIME_JSON='"on_runtime": {"engine": "'"$ON_ENGINE"'", "implementation": "'"$ON_IMPLEMENTATION"'", "constraint": "'"$ON_CONSTRAINT"'", "mount": "'"$ON_MOUNT"'"},'
+fi
 # The shard's version keys: ruby_version carries the RUNTIME's version
 # (34.0.1 — the selector's @ line, spec 28 §8), language_version the
 # ruby language compat line (3.4); implementation mirrors the L1
@@ -363,7 +461,7 @@ cat > "$OUT/$STEM.manifest.json" <<EOF
     "sources": [
       {"name": "$ARCHIVE_NAME", "sha256": "$SHA256"}
     ]
-  },
+  },$ON_RUNTIME_JSON
   "image": {
     "filename": "$STEM.tfs",
     "sha256": "$sha",
@@ -413,6 +511,12 @@ sed -e "s|@@BLOB_SHA256@@|$sha|g" \
 echo "manifest: $OUT/payload-$FLAVOR-$TRIPLET.yaml"
 
 # -------------------------------------------------------------- smoke
+# NATIVE mode: the imaged interpreter answers on the host, then the
+# shipped pair answers the spec 17 wire. JVM mode (spec 33): the pair
+# has NO standalone boot — the negative gate proves the fail-closed
+# named error (exit 65), and the COMPOSED smoke runs the real wire
+# (shim → this runtime → the published graalvm owner).
+if [ "$JVM_MODE" = 0 ]; then
 step "boot smoke (the imaged $INT_NAME answers $SMOKE_ARGS on the host)"
 TMPD="$(mktemp -d)"
 trap 'rm -rf "$TMPD"' EXIT
@@ -463,3 +567,119 @@ if ! out=$(MSYS2_ARG_CONV_EXCL='*' env \
 fi
 echo "$out" | grep -v '^\[tebako\]' | head -2
 echo "wrapper smoke OK"
+else
+# ------------------------------------------------------ jvm-mode smokes
+step "standalone NEGATIVE smoke (spec 33 §5: the pair alone fails closed)"
+mkdir -p "$WORK/tmp"
+set +e
+out=$(MSYS2_ARG_CONV_EXCL='*' env \
+    TEBAKO_RUNTIME_IMAGE="$(native_path "$IMG")" \
+    TMPDIR="$(native_path "$WORK/tmp")" \
+    "$OUT/$STEM$EXE_SUFFIX" --tebako-entry "$INT_NAME" $SMOKE_ARGS 2>&1)
+rc=$?
+set -e
+echo "$out" | head -3
+[ "$rc" = 65 ] || { echo "::error::standalone jvm boot wanted exit 65 (named fail-closed), got $rc"; exit 1; }
+echo "standalone negative smoke OK (exit 65)"
+
+step "composed smoke (shim → this runtime → the published graalvm owner)"
+# The pins (pins.rb): OWNER_REPO/OWNER_RELEASE/OWNER_STEM/
+# OWNER_STORE_ID/OWNER_EXE_SHA256/OWNER_IMAGE_SHA256/DEP_STORE_ID and the
+# TEBAKO_SHIM_ASSET/TEBAKO_SHIM_SHA256 tool pins. SHIM_BIN is the
+# downloaded dispatcher (the workflow's fetch step).
+for v in OWNER_REPO OWNER_RELEASE OWNER_STEM OWNER_STORE_ID OWNER_EXE_SHA256 OWNER_IMAGE_SHA256 DEP_STORE_ID TEBAKO_SHIM_ASSET TEBAKO_SHIM_SHA256; do
+  eval "val=\${$v:-}"
+  [ -n "$val" ] || { echo "::error::$v unset — run tools/pins.rb for this leg first (the composed smoke pins)"; exit 1; }
+done
+SHIM_BIN="${SHIM_BIN:-}"
+[ -n "$SHIM_BIN" ] && [ -f "$SHIM_BIN" ] || { echo "::error::SHIM_BIN (the tebako-shim exe) is required for the composed smoke"; exit 1; }
+
+STORE="$WORK/store"
+rm -rf "$STORE" 2>/dev/null || mv "$STORE" "$STORE.stale.$$"
+mkdir -p "$STORE/runtimes/$OWNER_STORE_ID" "$STORE/runtimes/$DEP_STORE_ID" \
+         "$STORE/payloads/rbcsmoke" "$STORE/shims"
+
+# The owner entry: the PUBLISHED graalvm pair (releases are the
+# interface), sha256-verified against BOTH the recipe pins and the owner
+# release's own SHA256SUMS (the two-anchor rule, same as the tfs fetch).
+obase="https://github.com/$OWNER_REPO/releases/download/$OWNER_RELEASE"
+curl -sL --fail -o "$WORK/owner.exe" "$obase/$OWNER_STEM"
+curl -sL --fail -o "$WORK/owner.tfs" "$obase/$OWNER_STEM.tfs"
+curl -sL --fail -o "$WORK/owner.manifest.json" "$obase/$OWNER_STEM.manifest.json"
+curl -sL --fail -o "$WORK/owner-SHA256SUMS.txt" "$obase/SHA256SUMS.txt"
+sha256_check "$OWNER_EXE_SHA256" "$WORK/owner.exe"
+sha256_check "$OWNER_IMAGE_SHA256" "$WORK/owner.tfs"
+for f in "$OWNER_STEM" "$OWNER_STEM.tfs"; do
+  want="$( [ "$f" = "$OWNER_STEM" ] && echo "$OWNER_EXE_SHA256" || echo "$OWNER_IMAGE_SHA256" )"
+  got="$(awk -v a="$f" '$2 == a {print $1}' "$WORK/owner-SHA256SUMS.txt")"
+  [ "$got" = "$want" ] || { echo "::error::owner release sums disagree with the recipe pin for $f"; exit 1; }
+done
+odir="$STORE/runtimes/$OWNER_STORE_ID"
+cp "$WORK/owner.exe" "$odir/$OWNER_STEM" && chmod 755 "$odir/$OWNER_STEM"
+cp "$WORK/owner.tfs" "$odir/$OWNER_STEM.tfs" && chmod 444 "$odir/$OWNER_STEM.tfs"
+printf '%s  %s\n' "$OWNER_EXE_SHA256" "$OWNER_STEM" > "$odir/sha256"
+printf '%s  %s\n' "$OWNER_IMAGE_SHA256" "$OWNER_STEM.tfs" > "$odir/$OWNER_STEM.tfs.sha256"
+printf 'url=%s/%s\nsha256=%s\n' "$obase" "$OWNER_STEM" "$OWNER_EXE_SHA256" > "$odir/origin"
+printf 'url=%s/%s.tfs\nsha256=%s\n' "$obase" "$OWNER_STEM" "$OWNER_IMAGE_SHA256" > "$odir/$OWNER_STEM.tfs.origin"
+# The store's manifest.json is the release shard, array-wrapped.
+ruby -rjson -e 'puts JSON.pretty_generate([JSON.parse(File.read(ARGV[0]))])' \
+  "$WORK/owner.manifest.json" > "$odir/manifest.json"
+
+# The dep entry: the pair THIS leg just built.
+ddir="$STORE/runtimes/$DEP_STORE_ID"
+cp "$EXE_OUT" "$ddir/$STEM" && chmod 755 "$ddir/$STEM"
+cp "$IMG" "$ddir/$STEM.tfs" && chmod 444 "$ddir/$STEM.tfs"
+printf '%s  %s\n' "$exe_sha" "$STEM" > "$ddir/sha256"
+printf '%s  %s\n' "$sha" "$STEM.tfs" > "$ddir/$STEM.tfs.sha256"
+printf 'url=file://%s\nsha256=%s\n' "$EXE_OUT" "$exe_sha" > "$ddir/origin"
+printf 'url=file://%s\nsha256=%s\n' "$IMG" "$sha" > "$ddir/$STEM.tfs.origin"
+ruby -rjson -e 'puts JSON.pretty_generate([JSON.parse(File.read(ARGV[0]))])' \
+  "$OUT/$STEM.manifest.json" > "$ddir/manifest.json"
+
+# The probe payload (kind app, runtime_requirement truffleruby) — the
+# spec-33 dogfood's P-cell shape: prints RUBY_ENGINE and loads the json
+# cext (the sulong path — the llvm.home token's proof).
+SMOKE_STAGE="$WORK/smoke-stage"
+mkdir -p "$SMOKE_STAGE/app/bin" "$SMOKE_STAGE/__tpkg__"
+cat > "$SMOKE_STAGE/app/bin/hello" <<'RUBY'
+puts "hello from #{RUBY_ENGINE} #{RUBY_VERSION}"
+require "json"
+puts JSON.generate({ok: true, engine: RUBY_ENGINE})
+RUBY
+chmod 755 "$SMOKE_STAGE/app/bin/hello"
+cat > "$SMOKE_STAGE/__tpkg__/manifest.yaml" <<YAML
+identity:
+  schema_version: 1
+  kind: app
+  name: rbcsmoke
+  version: "0.1.0"
+  producer: {tool: feedstock-build, tool_version: "1"}
+  created: "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  digest:
+    tree_hash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    blob_sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  signing: {state: unsigned}
+  encryption: {state: none}
+provides:
+  entrypoints:
+    - name: rbcsmoke
+      path: /app/bin/hello
+      runtime_requirement: {engine: ruby, implementation: truffleruby, constraint: ">= 34, < 35"}
+  platforms: universal
+  capabilities: {exec: true, read: true}
+YAML
+"$TFS_CLI" mkimage --format dwarfs "$SMOKE_STAGE" --output "$STORE/payloads/rbcsmoke/0.1.0.tfs"
+chmod 444 "$STORE/payloads/rbcsmoke/0.1.0.tfs"
+psha="$(sha256_of "$STORE/payloads/rbcsmoke/0.1.0.tfs")"
+printf '%s  %s\n' "$psha" "0.1.0.tfs" > "$STORE/payloads/rbcsmoke/0.1.0.tfs.sha256"
+cp "$SMOKE_STAGE/__tpkg__/manifest.yaml" "$STORE/payloads/rbcsmoke/0.1.0.manifest.yaml"
+cp "$SHIM_BIN" "$STORE/shims/rbcsmoke" && chmod 755 "$STORE/shims/rbcsmoke"
+
+out=$(env TEBAKO_HOME="$STORE" TEBAKO_OFFLINE=1 TEBAKO_RBCSMOKE_VERSION=0.1.0 \
+    TMPDIR="$(native_path "$WORK/tmp")" \
+    "$STORE/shims/rbcsmoke" 2>&1) || { echo "::error::composed smoke failed: $out"; exit 1; }
+echo "$out" | grep -v '^\[tebako\]' | head -3
+echo "$out" | grep -q '"engine":"truffleruby"' || {
+  echo "::error::composed smoke did not run on truffleruby: $out"; exit 1; }
+echo "composed smoke OK (shim → truffleruby-jvm → graalvm owner, json cext loaded)"
+fi

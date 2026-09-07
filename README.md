@@ -28,6 +28,16 @@ on their entrypoints (or select `ruby:truffleruby` through the spec 28
 grammar); the dispatcher resolves the newest compatible cached runtime
 (or downloads + verifies it from this repo's release index).
 
-The jvm-mode sibling (truffleruby on `java:graalvm`, spec 33's
-runtime-on-runtime composition) is TODO.truffleruby/03 — a separate
-registry entry from this same recipe's second flavor, not a new repo.
+The **jvm-mode sibling** (truffleruby on `java:graalvm`, spec 33's
+runtime-on-runtime composition — TODO.truffleruby/03) ships from this
+same recipe's second flavor: the env image is the truffleruby JVM home,
+composed ON the published graalvm java owner at dispatch (the
+`on_runtime` edge — graalvm ONLY; temurin fails by name). The mode is a
+NON-axis for selection (spec 28 §8): both modes answer
+`ruby:truffleruby`; the jvm mode is pinned per-entry
+(`truffleruby-jvm`) or by the `;tebako=` line (native rides 2.4.0, jvm
+rides 2.5.0 — the spec-33-aware launcher). Early-signal bench
+(2026-09-07, `bench-2a` in the ecosystem PROGRESS records): the native
+mode runs the fib34 kernel at 0.148× MRI (~6.8× faster); the jvm mode
+as composed (CE owner, `-XX:-UseJVMCINativeLibrary`) runs interpreted —
+reported for the record, gate-exempt by the pre-declared rule.

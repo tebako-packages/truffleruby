@@ -1,0 +1,71 @@
+schema_version: 1
+# Runtime manifest template for truffleruby JVM mode (spec 33 §2 — the
+# runtime-on-runtime form): the env image is the truffleruby JVM home,
+# composed ON a graalvm java owner at dispatch. The in-image on_runtime
+# block is the AUTHORITY (the release shard mirrors it for the shim's
+# plan-time read; the driver cross-checks). Filled from recipe.yml's
+# flavors.jvm block by tools/build; every fact below is the 2026-09-07
+# spec-33 dogfood's (TODO.truffleruby/03's record), never re-derived.
+identity:
+  schema_version: 1
+  kind: runtime
+  name: "truffleruby"
+  version: "@@VERSION@@"
+  producer: {tool: feedstock-build, tool_version: "1"}
+  created: "@@CREATED@@"
+  source: {src_sha256: "@@UPSTREAM_SHA256@@", commit: "@@UPSTREAM_COMMIT@@", builder: "local"}
+  digest:
+    tree_hash: "sha256:0000000000000000000000000000000000000000000000000000000000000000"  # placeholder until the CAS lands (spec 03)
+    blob_sha256: "@@BLOB_SHA256@@"   # zeroed inside the image (spec 03 §7)
+  signing: {state: unsigned}
+  encryption: {state: none}
+  # spec 33 §2's bridge law: compound {mount} argv tokens splice the
+  # materialized whole-tree root, and the trigger reads the LITERAL key
+  # identity.annotations.java_home — the mechanism is runtime-neutral but
+  # the key name is not (the deviation record rides manifests/runtime.yaml;
+  # tebako#548 tracks the neutral `home` key). Unannotated = named exit 65.
+  annotations: {java_home: "/"}
+provides:
+  provides:
+    engine: "@@ENGINE@@"
+    version: "@@VERSION@@"
+    # language_version rides the recipe (flavors.jvm.language_version) as
+    # the feedstock SSOT; the shipped tpkg model has no
+    # EngineProvides.language_version field and mkimage re-serializes
+    # through the model — the key lands here when the model grows it (the
+    # native template carries the same note; axis-polish batch item).
+    abi_line: "@@ABI_LINE@@"
+    platform: "@@TRIPLET@@"
+    implementation: "@@IMPLEMENTATION@@"
+  built_from:
+    src_sha256: "@@UPSTREAM_SHA256@@"
+    patch_set: "none"   # a repack applies no patches; the field is required non-empty
+  # The spawn surface (spec 30 §2), rendered from the recipe's flavor
+  # entrypoints (the feedstock SSOT): the JVM home's bin/ inventory is the
+  # same 15 names as native — bin/ruby is a real Mach-O/ELF launcher in the
+  # JVM distribution too (verified 2026-09-07 on the staged tree). The
+  # entry DISPATCH never executes those scripts — the driver composes the
+  # owner java + argv_template and appends the entry path (RubyLauncher's
+  # first user arg); the declarations anchor the spawn-surface existence
+  # checks.
+  entrypoints:
+@@ENTRYPOINTS_YAML@@
+  # The owner edge + compose template (spec 33 §2). graalvm ONLY — a
+  # temurin owner must produce the named error, never a slow silent run
+  # (TODO.truffleruby/03 item 2; bench-2a 2026-09-07: interpreted JVM mode
+  # runs fib34 ~5.2x SLOWER than MRI — silence would ship that).
+  # -XX:-UseJVMCINativeLibrary is the dogfood-proven bridge: the
+  # truffle-runtime jar JNI-links the owner's libgraal ONLY on an exact
+  # GraalVM-build match (graalvm CE 25.0.4.1 owner + truffleruby 34.0.1
+  # modules = UnsatisfiedLinkError on LibGraalScope.attachThreadTo); the
+  # token selects the Java-side Graal compiler. The llvm.home token is
+  # load-bearing: without it the FIRST cext require dies `Could not find
+  # internal resources for configuration native` (InternalLibraryLocator).
+  on_runtime:
+    mount: "@@ON_MOUNT@@"
+    argv_template:
+@@ARGV_YAML@@
+  env: {}
+  capabilities: {exec: true, read: true, runtime: true}
+requires:
+  - {kind: runtime, engine: "@@ON_ENGINE@@", implementation: "@@ON_IMPLEMENTATION@@", constraint: "@@ON_CONSTRAINT@@"}

@@ -6,11 +6,12 @@ summary: "TruffleRuby (GraalVM Community, native mode) — tebako ruby RUNTIME p
 
 # The flavor dimension (spec 28 §8's implementation axis shape — one
 # recipe, flavored sources). For truffleruby the flavor key names the
-# MODE: `native` here; `jvm` lands with TODO.truffleruby/03 and is the
-# spec 33 runtime-on-runtime form (an owner edge to java:graalvm). The
-# implementation value is `truffleruby` on BOTH modes — the mode is a
-# NON-axis for selection (spec 33 §6: mode selection rides `;tebako=` or
-# per-entry pins, never the selector grammar).
+# MODE: `native` (the exe-relative native-image launcher) and `jvm`
+# (TODO.truffleruby/03 — the spec 33 runtime-on-runtime form, an owner
+# edge to java:graalvm). The implementation value is `truffleruby` on
+# BOTH modes — the mode is a NON-axis for selection (spec 33 §6: mode
+# selection rides `;tebako=` or per-entry pins, never the selector
+# grammar; the registry names the jvm entry `truffleruby-jvm`).
 flavors:
   native:
     implementation: "truffleruby"
@@ -48,6 +49,98 @@ flavors:
           sha256: "8b1156eda10f3a00c56544f91c3f06735db49fe5850d801bb2760ab0b8315441"
           strip_components: 1
 
+  # The JVM-mode flavor (TODO.truffleruby/03 — spec 33's runtime-on-runtime
+  # form, the spec's FIRST feedstock instance): the env image is the
+  # truffleruby JVM home (modules/ + the same 15-name bin/ inventory —
+  # bin/ruby is a real Mach-O/ELF launcher in the JVM distribution too,
+  # verified 2026-09-07), composed ON a graalvm java owner at dispatch.
+  # Every contract fact below is the 2026-09-07 spec-33 dogfood's
+  # (TODO.truffleruby/03's record; PROGRESS/35): the argv template
+  # verbatim, the llvm/sulong home token, the -XX:-UseJVMCINativeLibrary
+  # bridge (libgraal JNI-links ONLY on an exact owner-build match), the
+  # whole-tree home annotation (the literal java_home key, tebako#548).
+  jvm:
+    implementation: "truffleruby"
+    language_version: "3.4"          # the ruby language line (same upstream build as native)
+    abi_line: "34"
+    interpreter_api_version: "26"    # the dogfood-proven layout line (the jvm home declares NO interpreter — spec 33 §5)
+    entrypoints: [bundle, bundler, erb, gem, irb, racc, rake, rbs, rdbg, rdoc, ri, ruby, syntax_suggest, truffleruby, truffleruby-polyglot-get]
+    # The owner edge (spec 33 §2): graalvm-flavor java ONLY — a temurin
+    # owner must produce the named error, never a slow silent run
+    # (bench-2a 2026-09-07: interpreted JVM mode = fib34 ~5.2x SLOWER
+    # than MRI; silence would ship that).
+    on_runtime:
+      engine: "java"
+      implementation: "graalvm"
+      constraint: ">= 24"
+      mount: "/__runners__/truffleruby"
+    # The compose template, dogfood-verbatim (all tokens space-free).
+    # {mount} splices the materialized whole-tree home root per spec 33
+    # §2's bridge law.
+    argv_template: ["-XX:-UseJVMCINativeLibrary", "-Dorg.graalvm.language.ruby.home={mount}", "-Dorg.graalvm.language.llvm.home={mount}/lib/sulong", "--module-path", "{mount}/modules", "-m", "dev.truffleruby.launcher/org.truffleruby.launcher.RubyLauncher"]
+    # The jvm pair REQUIRES the spec-33-aware launcher — tebako >= 2.5.0
+    # (the shared runtime.wrapper_tebako stays the native flavor's 2.4.0
+    # line; the mode rides the tebako line per spec 28 §8, so the two
+    # flavors coexist in one store: ruby-34.0.1-2.4.0 vs -2.5.0). Digests
+    # are the v2.5.0 release's SHA256SUMS entries, fetched 2026-09-07.
+    wrapper_tebako: "2.5.0"
+    wrapper_sha256:
+      macos-arm64: "b4725da9e99425acbda3d189738f78773b7658d63c015cf03ef4e2f035e94d28"
+      linux-gnu-x86_64: "02272c8ece40c5cfadc9cb77330d68f120b8eddd8ec3b8d2360ef56450d1f245"
+      linux-gnu-arm64: "f7c89c0dae5bd80bf5e5898f9fc77e4f15fab4b8351dc1a56a4d92ae5352bbb7"
+    # The owner pair the composed smoke runs against (the jvm legs
+    # download it into a throwaway store): the published java:graalvm
+    # line — tebako-packages/openjdk v2.4.1, graalvm CE 25.0.4.1 on the
+    # tebako 2.4.0 line. Digests are that release's SHA256SUMS.txt
+    # entries (cross-checked at fetch; the owner exe IS the line's
+    # tebako-runtime-launcher bytes — same sums as the 2.4.0 wrapper
+    # pins above, by construction). NOTE: this block sits AFTER upstream
+    # on purpose — tools/build's indentation-anchored reader takes the
+    # first 6-space `version:`/`tag:` in the flavor, which must be the
+    # UPSTREAM's (the 2026-09-07 local gate caught owner_smoke.version
+    # shadowing it: artifacts came out named ...-25.0.4.1-...).
+    upstream:
+      # Same upstream release as native (graal-34.0.1) — the JVM-mode
+      # archives. Upstream publishes NO sha256 sums: the pins below were
+      # computed from the downloaded archives 2026-09-07 and are the
+      # single trust anchor.
+      # Platform matrix: the graalvm OWNER's coverage is the constraint —
+      # openjdk-graalvm 25.0.4.1 ships macos-arm64 + linux-gnu-x86_64
+      # (+ windows-ucrt64, which truffleruby upstream does not cover).
+      # aarch64-linux-gnu lands when the graalvm flavor gains that leg —
+      # a named follow-up, never a silent omission (the linux-aarch64
+      # archive's computed sha256 for that day:
+      # c5b56f62a3238b98bab2fd2b624e16bc907b0f4f888b196950748739c5ce4790).
+      version: "34.0.1"
+      tag: "graal-34.0.1"
+      sources:
+        - platform: "aarch64-macos"
+          url: "https://github.com/oracle/truffleruby/releases/download/graal-34.0.1/truffleruby-community-jvm-34.0.1-macos-aarch64.tar.gz"
+          sha256: "c1ca478c7534f4b1f317d11ac95b273757bbf273f6de533887f4a6129e588ab2"
+          strip_components: 1
+        - platform: "x86_64-linux-gnu"
+          url: "https://github.com/oracle/truffleruby/releases/download/graal-34.0.1/truffleruby-community-jvm-34.0.1-linux-amd64.tar.gz"
+          sha256: "62d65585fbff7c2b26398c397d0d2ea1b5fb4c7760c1dfe04c7dce966e6c9d15"
+          strip_components: 1
+    owner_smoke:
+      repo: "tebako-packages/openjdk"
+      release: "v2.5.0"
+      version: "25.0.4.1"
+      # The owner line MUST be >= 2.5.0 — the spec-33 entry-routing rule
+      # (the entry resolves past the dep mount) lives in that launcher; a
+      # 2.4.0 owner joins the entry onto the dep mount (the 2026-09-07
+      # local gate; tebako#552). The exe digests equal the 2.5.0
+      # launcher's monolith entries (the pair's exe IS the launcher,
+      # byte-identical); the image digests are the openjdk v2.5.0
+      # release's own SHA256SUMS entries.
+      tebako: "2.5.0"
+      exe_sha256:
+        macos-arm64: "b4725da9e99425acbda3d189738f78773b7658d63c015cf03ef4e2f035e94d28"
+        linux-gnu-x86_64: "02272c8ece40c5cfadc9cb77330d68f120b8eddd8ec3b8d2360ef56450d1f245"
+      image_sha256:
+        macos-arm64: "9df49bfb23dc634be9b673906a2374cada46b54a46ff11b70923788bbb431b50"
+        linux-gnu-x86_64: "7131b2ac273373318bacff3c2d04b4278f0889c239926a3b98034c78b1ceac40"
+
 runtime:
   engine: "ruby"
   contract_version: 2              # the spec 17 driver contract the wrapper speaks
@@ -76,9 +169,10 @@ runtime:
   # (tebako-runtime-launcher) and the preload shim (link-unit). The line
   # number names the artifacts (tebako-runtime-<line>-34.0.1-*) and the
   # release tag (v<line> — the trr convention: the tag IS the tebako
-  # line). v2.4.0 is the current line (spec 32's kind:executable reader
-  # is REQUIRED downstream of this runtime — see the openjdk recipe's
-  # pin-comment history).
+  # line). v2.4.0 is the NATIVE flavor's line (spec 32's kind:executable
+  # reader is REQUIRED downstream of this runtime — see the openjdk
+  # recipe's pin-comment history); the jvm flavor overrides per-flavor
+  # (flavors.jvm.wrapper_tebako 2.5.0 — the spec-33-aware launcher).
   wrapper_tebako: "2.4.0"
   # The wrapper's trust anchor, per tool-platform (the launcher is the
   # shipped runtime pair's process entry point — an unauthenticated
@@ -96,19 +190,33 @@ runtime:
 # tools/pins.rb reads this block into $GITHUB_ENV). The tfs pins are
 # cross-checked against the release's SHA256SUMS at fetch time; the
 # link-unit tarballs are NOT in that monolith, so these pins are their
-# single trust anchor (computed from the v2.4.0 downloads 2026-09-06).
+# single trust anchor (computed from the v2.5.0 downloads 2026-09-07).
+# v2.5.0 is REQUIRED for the jvm flavor: tfs mkimage re-serializes the
+# embedded manifest THROUGH the tpkg model, and only the 2.5.0 model
+# round-trips on_runtime + the widened requires grammar (spec 33); the
+# 2.4.0 CLI would silently strip the owner edge. The native flavor builds
+# with the same 2.5.0 tools — the model is a strict superset.
 tools:
   repo: "tamatebako/tebako"
-  release: "v2.4.0"
+  release: "v2.5.0"
   sha256:
     tfs:
-      macos-arm64: "e4da011f8583d5d24f4d257fecd4df0274476bcb510d9f5df70e08e288cb008c"
-      linux-gnu-x86_64: "70d83415f26f0aedc793de325df92e8ba27314172c61320a32b8cf5c014ee322"
-      linux-gnu-arm64: "b7e01cb873216de2d4f289b09a993bf380d5a7efccbb7008ba2f080c68b5763c"
+      macos-arm64: "0e1f84c1259c3e290c68c329fa763a0bf9f6665efb321e24175013e249061b35"
+      linux-gnu-x86_64: "205b44d9eca7d327215ac0ae394fb74b310581836b56ee080999b873abe49787"
+      linux-gnu-arm64: "de092286996696073742197211a17863e80c4952ab6b1e2c232b0e98ee21b7ed"
     link-unit:                       # all legs are POSIX (upstream ships no windows build)
-      macos-arm64: "e77c4a2213884bd322e33a176b3c470b222ee870d3af9e5c8e2f11497b00bdde"
-      linux-gnu-x86_64: "232b0df7bc4155651f13889c3528c14f19c976bdb0c912bd9867f9ef25fcfbd8"
-      linux-gnu-arm64: "feb75dd709449c9fac24e0bef14a09c878e712890ebfdaac70414908d0691894"
+      macos-arm64: "8535a317ee38f3a9e7e085beb5889b65497b55ab4c4b6442273364f5e0b5a7c3"
+      linux-gnu-x86_64: "f8db761a71dff7a9868d5d76cfc337324a5b55b911d9ea84522d3a702f6eb808"
+      linux-gnu-arm64: "25e39a7953ec120299de019ab971fd48634a9fe28369fbf310615b781a822d3e"
+    # The dispatcher for the jvm legs' COMPOSED smoke (spec 33's real
+    # wire: shim → dep runtime → owner runtime). Pinned for all three
+    # tool platforms so the native legs' pins.rb run stays total; only
+    # the jvm legs' smoke fetches it. Digests are the v2.5.0 release's
+    # SHA256SUMS entries (cross-checked at fetch like the tfs pin).
+    tebako-shim:
+      macos-arm64: "ad6a88373abc721c7d7e5e6f482d3fd6af2e99e0117ddcfdf7529e77eb090139"
+      linux-gnu-x86_64: "991a66026944b3b5db88278a1f691ed91b85a0a04bd588b30831ed23312724da"
+      linux-gnu-arm64: "db1922f54ead5abc48f1a111cfabe809f2a1b6018b588ff1361ef58abd986732"
 
 image:
   format: dwarfs
