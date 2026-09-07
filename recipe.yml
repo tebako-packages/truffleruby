@@ -1,0 +1,118 @@
+# Feedstock recipe for truffleruby
+# spec 13 §9 + docs/conventions.md in tebako-packages/index
+name: "truffleruby"
+kind: runtime
+summary: "TruffleRuby (GraalVM Community, native mode) — tebako ruby RUNTIME pairs (wrapper exe + env image); the spec 28 §8 implementation axis's truffleruby flavor (ruby:truffleruby)"
+
+# The flavor dimension (spec 28 §8's implementation axis shape — one
+# recipe, flavored sources). For truffleruby the flavor key names the
+# MODE: `native` here; `jvm` lands with TODO.truffleruby/03 and is the
+# spec 33 runtime-on-runtime form (an owner edge to java:graalvm). The
+# implementation value is `truffleruby` on BOTH modes — the mode is a
+# NON-axis for selection (spec 33 §6: mode selection rides `;tebako=` or
+# per-entry pins, never the selector grammar).
+flavors:
+  native:
+    implementation: "truffleruby"
+    language_version: "3.4"          # the ruby language line (34.0.1 reports "like ruby 3.4.9")
+    abi_line: "34"                   # truffleruby's own line grammar (spec 28 §8's ABI line for native-ext payloads)
+    interpreter_api_version: "3.4"   # layout.yaml's required declared line
+    # The complete bin/ inventory of the staged home (spec 03 §2.2
+    # completeness — verified against the staged macos tree 2026-09-06:
+    # 15 names; ruby + truffleruby are real Mach-O/ELF launchers, the
+    # rest are upstream's bash shims that self-locate via $0 and exec the
+    # sibling ruby — path-agnostic, no shebang rewrite needed).
+    entrypoints: [bundle, bundler, erb, gem, irb, racc, rake, rbs, rdbg, rdoc, ri, ruby, syntax_suggest, truffleruby, truffleruby-polyglot-get]
+    upstream:
+      # TruffleRuby Community 34.0.1 (oracle/truffleruby, tag
+      # graal-34.0.1) — the NATIVE-mode archives (no JVM in the image).
+      # Upstream publishes NO sha256 sums: the pins below were computed
+      # from the downloaded archives 2026-09-06 and are the single trust
+      # anchor (same standing as the recipe's link-unit pins).
+      # Platform matrix: upstream ships NO windows build and no
+      # macos-x86_64 build — the registry declares the three carried
+      # triplets declaratively (never by omission).
+      version: "34.0.1"
+      tag: "graal-34.0.1"     # the upstream release tag (no build number upstream)
+      sources:
+        - platform: "aarch64-macos"
+          url: "https://github.com/oracle/truffleruby/releases/download/graal-34.0.1/truffleruby-community-34.0.1-macos-aarch64.tar.gz"
+          sha256: "cadd829d48ce71da927e4aca9b02dd3f18fb2ff1a33f197d22d855b3fc087600"
+          strip_components: 1
+        - platform: "x86_64-linux-gnu"
+          url: "https://github.com/oracle/truffleruby/releases/download/graal-34.0.1/truffleruby-community-34.0.1-linux-amd64.tar.gz"
+          sha256: "d73540e36d457555d57c7bff7c35805d05388912fb54a880dea10cc44d001f41"
+          strip_components: 1
+        - platform: "aarch64-linux-gnu"
+          url: "https://github.com/oracle/truffleruby/releases/download/graal-34.0.1/truffleruby-community-34.0.1-linux-aarch64.tar.gz"
+          sha256: "8b1156eda10f3a00c56544f91c3f06735db49fe5850d801bb2760ab0b8315441"
+          strip_components: 1
+
+runtime:
+  engine: "ruby"
+  contract_version: 2              # the spec 17 driver contract the wrapper speaks
+  interpreter: "/bin/ruby"         # the wrapper's interpreter grant (layout schema_minor 4)
+  smoke_args: "-v"                 # the interpreter's version flag (the build's boot smokes)
+  # The per-flavor entrypoints list (flavors:<flavor>.entrypoints) is the
+  # feedstock SSOT for the spawn surface (spec 30 §2): tools/build renders
+  # it into the env image manifest's runtime entrypoints, the driver's
+  # bare-name --tebako-entry resolves against exactly these declarations,
+  # and the read-back + smoke gates prove them.
+  #
+  # spec 29 §3, settled EMPIRICALLY 2026-09-06 (the due-diligence probe,
+  # PR body): the truffleruby native launcher resolves its home
+  # EXE-RELATIVE and nothing else — an isolated bin/ruby dies
+  # ("Loading libjli failed", rc 255) and NEITHER -Xhome/--home NOR
+  # TRUFFLERUBY_HOME overrides it. visibility preload (tier 1)
+  # materializes the exe alone, so self-location can never find the
+  # home; exec-cache (tier 2b) materializes the home whole (the
+  # java_home-annotated mount), and the exe-relative resolution then
+  # lands inside the materialized tree by construction. A JVM needs no
+  # VFS once its home is materialized — the same holds for this
+  # native-image launcher.
+  visibility: "exec-cache"
+  mount_root_override: false       # closed default — under exec-cache the interpreter reads the materialized tree, never the mount; granting a no-op knob violates spec 00 §9
+  # The tebako product line the pair builds against: the wrapper exe
+  # (tebako-runtime-launcher) and the preload shim (link-unit). The line
+  # number names the artifacts (tebako-runtime-<line>-34.0.1-*) and the
+  # release tag (v<line> — the trr convention: the tag IS the tebako
+  # line). v2.4.0 is the current line (spec 32's kind:executable reader
+  # is REQUIRED downstream of this runtime — see the openjdk recipe's
+  # pin-comment history).
+  wrapper_tebako: "2.4.0"
+  # The wrapper's trust anchor, per tool-platform (the launcher is the
+  # shipped runtime pair's process entry point — an unauthenticated
+  # download would be a supply-chain hole). Digests are the v2.4.0
+  # release's SHA256SUMS entries, fetched 2026-09-06.
+  wrapper_sha256:
+    macos-arm64: "b27b44f560af3935458066e6d8815a8c985025ddf9657483303b45ad98e1db4c"
+    linux-gnu-x86_64: "910fc6d538e624150c9967564c67aefa277686ec00a77d898de8d78753ff12a7"
+    linux-gnu-arm64: "bf74a32b83c9b31ca96d23ae8fe72ba45c9592d4415e91998fddade6dcf549fb"
+
+# Factory tools used by tools/build (the imager + the preload shim): the
+# tfs CLI and the link-unit tarball from the tamatebako/tebako release.
+# The asset digests are pinned HERE — tools.sha256 is the repo's
+# toolchain pin SSOT (the workflow carries no version or digest literals;
+# tools/pins.rb reads this block into $GITHUB_ENV). The tfs pins are
+# cross-checked against the release's SHA256SUMS at fetch time; the
+# link-unit tarballs are NOT in that monolith, so these pins are their
+# single trust anchor (computed from the v2.4.0 downloads 2026-09-06).
+tools:
+  repo: "tamatebako/tebako"
+  release: "v2.4.0"
+  sha256:
+    tfs:
+      macos-arm64: "e4da011f8583d5d24f4d257fecd4df0274476bcb510d9f5df70e08e288cb008c"
+      linux-gnu-x86_64: "70d83415f26f0aedc793de325df92e8ba27314172c61320a32b8cf5c014ee322"
+      linux-gnu-arm64: "b7e01cb873216de2d4f289b09a993bf380d5a7efccbb7008ba2f080c68b5763c"
+    link-unit:                       # all legs are POSIX (upstream ships no windows build)
+      macos-arm64: "e77c4a2213884bd322e33a176b3c470b222ee870d3af9e5c8e2f11497b00bdde"
+      linux-gnu-x86_64: "232b0df7bc4155651f13889c3528c14f19c976bdb0c912bd9867f9ef25fcfbd8"
+      linux-gnu-arm64: "feb75dd709449c9fac24e0bef14a09c878e712890ebfdaac70414908d0691894"
+
+image:
+  format: dwarfs
+  # .tfs everywhere (the tebako fs image — DwarFS-T format; normal dwarfs
+  # readers cannot read it)
+  extension:
+    default: tfs

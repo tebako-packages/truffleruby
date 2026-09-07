@@ -1,0 +1,36 @@
+# Env-image layout declaration for the truffleruby runtime (spec 18 §2.2
+# — the C3 contract between the runtime exe and its env image). Grammar
+# owner: docs/spec/schemas/layout.yaml in tamatebako/tebako
+# (schema_minor 4); the writer here FLOWS the same owned values.
+# Rendered by tools/build into /lib/tebako/layout.yaml inside the image.
+schema_version: 1
+era: 2
+image_layout: 1
+# The mount root the image was built for — must equal the wrapper exe's
+# compiled-in WRAPPER_RUNTIME_ROOT (/__tfs__ on POSIX — every leg of this
+# feedstock is POSIX; crates/tebako-driver/src/wrapper.rs). A mismatch is
+# exit 78, never a broken boot.
+mount_root: "@@MOUNT_ROOT@@"
+interpreter_api_version: "@@API_VERSION@@"
+# spec 29's wrapper pattern: the exe artifact is the tebako-owned
+# wrapper (the upstream truffleruby bytes the driver cannot be linked
+# into); the real interpreter is declared here, POSIX-absolute.
+interpreter: "/bin/ruby@@EXE_SUFFIX@@"
+# spec 29 §3: exec-cache (tier 2b) — the native launcher resolves its
+# home EXE-RELATIVE and dies when materialized alone (the 2026-09-06
+# probe: "Loading libjli failed", rc 255; no -Xhome/--home/
+# TRUFFLERUBY_HOME override exists), so the home tree materializes into
+# the spec 22 §6 exec cache (the manifest's home annotation is the
+# whole-tree trigger) and the interpreter runs from host-real files.
+visibility: "exec-cache"
+# The link-unit preload shim rides the image so the jail's host-IO
+# binding survives the exec into the interpreter (the driver arms
+# DYLD_INSERT_LIBRARIES / LD_PRELOAD from this grant, spec 22 §3 rules
+# E2/E3; declared-but-absent is exit 78 — tools/build stages the file in
+# the same pass). Every leg of this feedstock is POSIX (upstream ships
+# no windows build), so the grant is unconditional here.
+@@PRELOAD_SHIM_DECL@@
+# mount_root_override omitted ⇒ false (the closed default): under
+# exec-cache the interpreter reads the materialized tree, never the
+# mount, so nothing in truffleruby follows TEBAKO_MOUNT_ROOT — a granted
+# no-op knob would violate spec 00 §9 (no decorative surface).
