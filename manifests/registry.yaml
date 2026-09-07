@@ -1,0 +1,32 @@
+schema_version: 1
+# Registry template for the truffleruby RUNTIME entry (native mode) —
+# rendered by the publish job (sed tokens from the built shards/sidecars)
+# and landed on main by bot PR. kind: runtime entries carry NO
+# entrypoints key (the registry validator: only apps and toolkits
+# declare entrypoints). `implementation: truffleruby` is the spec 28 §8
+# flavor axis — the selector spelling is ruby:truffleruby (one ruby
+# engine). The jvm-mode sibling (spec 33's runtime-on-runtime form)
+# lands with TODO.truffleruby/03 as a separate registry name; the mode
+# is a NON-axis (spec 33 §6).
+# Platform matrix: upstream (oracle/truffleruby) ships NO windows build
+# and no macos-x86_64 build — the three triplets below are the complete
+# declarative matrix, never an omission.
+payloads:
+- name: truffleruby
+  kind: runtime
+  versions:
+  - version: '@@VERSION@@'
+    implementation: truffleruby
+    platforms:
+      aarch64-macos:
+        artifact: @@STEM@@-macos-arm64.tfs
+        sha256: '@@SHA256_MACOS@@'
+      x86_64-linux-gnu:
+        artifact: @@STEM@@-linux-gnu-x86_64.tfs
+        sha256: '@@SHA256_LINUX@@'
+      aarch64-linux-gnu:
+        artifact: @@STEM@@-linux-gnu-arm64.tfs
+        sha256: '@@SHA256_LINUX_ARM@@'
+    release:
+      ref: tfs:github:tebako-packages/truffleruby:@@TAG@@
+  default: '@@VERSION@@'

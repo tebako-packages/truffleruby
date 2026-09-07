@@ -1,0 +1,7 @@
+schema_version: 1
+# The truffleruby feedstock registry — rendered from
+# manifests/registry.yaml by the build-payload publish job and landed on
+# main by bot PR per release tag. Empty until the first runtime release
+# (the resolver reads payloads: [] as "nothing listed here yet" — a
+# pre-release registry is a valid document).
+payloads: []
