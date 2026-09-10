@@ -11,7 +11,7 @@
 # only): it lives in the release shard (the shim's plan-time read) and the
 # in-image manifest (the authority).
 # Platform matrix: graalvm owner coverage is the constraint — the owner
-# (tebako-packages/openjdk v2.4.1, java:graalvm 25.0.4.1) ships
+# (tamatebako/openjdk v2.4.1, java:graalvm 25.0.4.1) ships
 # macos-arm64 + linux-gnu-x86_64 (+ windows-ucrt64, which truffleruby
 # upstream does not cover). aarch64-linux-gnu lands when the graalvm
 # flavor gains that leg — a named follow-up, never a silent omission.
@@ -28,5 +28,5 @@
         artifact: @@STEM@@-linux-gnu-x86_64.tfs
         sha256: '@@SHA256_LINUX@@'
     release:
-      ref: tfs:github:tebako-packages/truffleruby:@@TAG@@
+      ref: tfs:github:tamatebako/truffleruby:@@TAG@@
   default: '@@VERSION@@'

@@ -90,7 +90,7 @@ flavors:
       linux-gnu-arm64: "f7c89c0dae5bd80bf5e5898f9fc77e4f15fab4b8351dc1a56a4d92ae5352bbb7"
     # The owner pair the composed smoke runs against (the jvm legs
     # download it into a throwaway store): the published java:graalvm
-    # line — tebako-packages/openjdk v2.4.1, graalvm CE 25.0.4.1 on the
+    # line — tamatebako/openjdk v2.4.1, graalvm CE 25.0.4.1 on the
     # tebako 2.4.0 line. Digests are that release's SHA256SUMS.txt
     # entries (cross-checked at fetch; the owner exe IS the line's
     # tebako-runtime-launcher bytes — same sums as the 2.4.0 wrapper
@@ -123,7 +123,7 @@ flavors:
           sha256: "62d65585fbff7c2b26398c397d0d2ea1b5fb4c7760c1dfe04c7dce966e6c9d15"
           strip_components: 1
     owner_smoke:
-      repo: "tebako-packages/openjdk"
+      repo: "tamatebako/openjdk"
       release: "v2.5.0"
       version: "25.0.4.1"
       # The owner line MUST be >= 2.5.0 — the spec-33 entry-routing rule

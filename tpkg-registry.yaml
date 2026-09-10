@@ -28,7 +28,7 @@ payloads:
         artifact: tebako-runtime-2.4.0-34.0.1-linux-gnu-arm64.tfs
         sha256: '5e495a79b33d9fdedac6aa327c70c2306ad5086e3d43f01e93fabd0df1e10ec7'
     release:
-      ref: tfs:github:tebako-packages/truffleruby:v2.4.0
+      ref: tfs:github:tamatebako/truffleruby:v2.4.0
   default: '34.0.1'
 - name: truffleruby-jvm
   kind: runtime
@@ -43,5 +43,5 @@ payloads:
         artifact: tebako-runtime-2.5.0-34.0.1-linux-gnu-x86_64.tfs
         sha256: 'f62cff44280b43bfae2322b4243fb7fa20c8a2c46ed8caad343595258eb1803d'
     release:
-      ref: tfs:github:tebako-packages/truffleruby:v2.5.0
+      ref: tfs:github:tamatebako/truffleruby:v2.5.0
   default: '34.0.1'
