@@ -457,7 +457,7 @@ cat > "$OUT/$STEM.manifest.json" <<EOF
   "mount_root": "$MOUNT_ROOT",
   "image_layout": 1,
   "built_from": {
-    "release": "tebako-packages/truffleruby@$RELEASE_REF",
+    "release": "tamatebako/truffleruby@$RELEASE_REF",
     "sources": [
       {"name": "$ARCHIVE_NAME", "sha256": "$SHA256"}
     ]

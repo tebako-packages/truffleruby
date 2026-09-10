@@ -28,5 +28,5 @@ payloads:
         artifact: @@STEM@@-linux-gnu-arm64.tfs
         sha256: '@@SHA256_LINUX_ARM@@'
     release:
-      ref: tfs:github:tebako-packages/truffleruby:@@TAG@@
+      ref: tfs:github:tamatebako/truffleruby:@@TAG@@
   default: '@@VERSION@@'
