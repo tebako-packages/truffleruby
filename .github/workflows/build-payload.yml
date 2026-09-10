@@ -235,16 +235,16 @@ jobs:
         run: |
           set -euo pipefail
           tag="${{ github.ref_name }}"
-          gh release create "$tag" --repo tamatebako/truffleruby \
+          gh release create "$tag" --repo tamatebako/tebako-runtime-truffleruby \
             --title "$tag — tebako-runtime truffleruby (TruffleRuby Community $PKG_VERSION, $PUBLISH_FLAVOR mode)" \
             --notes "tebako ruby runtime pair (wrapper exe + env image) per platform — implementation truffleruby, $PUBLISH_FLAVOR mode; manifest.json is the release index, SHA256SUMS.txt the trust anchor." \
-            || gh release view "$tag" --repo tamatebako/truffleruby > /dev/null
+            || gh release view "$tag" --repo tamatebako/tebako-runtime-truffleruby > /dev/null
           for shard in out/$PUBLISH_FLAVOR-*/tebako-runtime-*.manifest.json; do
             dir="$(dirname "$shard")"
             stem="$(basename "$shard" .manifest.json)"
             # "$stem"* = the exe, the .tfs, both .sha256 sidecars, the
             # shard — never the sibling payload-<flavor>-<triplet>.yaml.
-            gh release upload --clobber "$tag" --repo tamatebako/truffleruby "$dir/$stem"*
+            gh release upload --clobber "$tag" --repo tamatebako/tebako-runtime-truffleruby "$dir/$stem"*
           done
       - name: Derive + upload the monoliths (manifest.json + SHA256SUMS.txt)
         shell: bash
@@ -254,7 +254,7 @@ jobs:
           ruby -rjson -e 'puts JSON.pretty_generate(ARGV.sort.map { |f| JSON.parse(File.read(f)) })' \
             out/$PUBLISH_FLAVOR-*/tebako-runtime-*.manifest.json > manifest.json
           cat out/$PUBLISH_FLAVOR-*/tebako-runtime-*.sha256 > SHA256SUMS.txt
-          gh release upload --clobber "$tag" --repo tamatebako/truffleruby manifest.json SHA256SUMS.txt
+          gh release upload --clobber "$tag" --repo tamatebako/tebako-runtime-truffleruby manifest.json SHA256SUMS.txt
       # The registry mirrors resolution fields only (L3): the env image
       # is the named artifact per platform; kind: runtime carries NO
       # entrypoints key (the validator: only apps and toolkits declare
