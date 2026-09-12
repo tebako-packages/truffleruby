@@ -426,6 +426,8 @@ echo "sha256: $exe_sha"
 # The trust anchor + the release shard (trr#140: platform legs write only
 # their own assets + shards + sidecars; the publish job derives the
 # monolith manifest.json + SHA256SUMS.txt in its finalize pass).
+# capabilities: display metadata (the versions catalog's chip axis), never a
+# selector axis — the implementation IS the Graal JIT.
 step "sidecars (.sha256) + the release shard (<stem>.manifest.json)"
 printf '%s  %s\n' "$sha" "$STEM.tfs" > "$IMG.sha256"
 printf '%s  %s\n' "$exe_sha" "$STEM$EXE_SUFFIX" > "$EXE_OUT.sha256"
@@ -450,9 +452,6 @@ cat > "$OUT/$STEM.manifest.json" <<EOF
   "ruby_version": "$VERSION",
   "language_version": "$LANG_VERSION",
   "implementation": "$IMPLEMENTATION",
-  # Display metadata (the versions catalog's chip axis), never a selector
-  # axis: the implementation IS the Graal JIT — the ruby-implementation
-  # axis's differentiator.
   "capabilities": ["jit"],
   "platform": "$ASSET_PLATFORM",
   "filename": "$STEM$EXE_SUFFIX",
